@@ -1,0 +1,5 @@
+{
+  "name": "Ikigai Finder",
+  "description": "An application to help users discover their Ikigai, or 'reason for being', by reflecting on their passions, vocations, missions, and professions. The app uses AI to synthesize user input and provide an inspiring summary.",
+  "requestFramePermissions": []
+}
