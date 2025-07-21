@@ -1,11 +1,253 @@
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { IkigaiData, IkigaiSectionKey } from './types';
-import { IKIGAI_SECTIONS, INSPIRING_QUOTES } from './constants';
-import { generateIkigaiSummaryStream } from './services/geminiService';
-import Header from './components/Header';
-import IkigaiCard from './components/IkigaiCard';
-import Spinner from './components/common/Spinner';
-import Footer from './components/Footer';
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+
+// --- TYPES (from types.ts) ---
+interface IkigaiData {
+    passion: string;
+    vocation: string;
+    mission: string;
+    profession: string;
+}
+
+type IkigaiSectionKey = keyof IkigaiData;
+
+interface IkigaiSection {
+    key: IkigaiSectionKey;
+    title: string;
+    description: string;
+    icon: React.ReactNode;
+}
+
+// --- CONSTANTS & ICONS (from constants.ts) ---
+
+const HeartIcon = () => React.createElement('svg',
+    {
+        xmlns: "http://www.w3.org/2000/svg",
+        className: "h-8 w-8 text-red-500",
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        strokeWidth: 2
+    },
+    React.createElement('path', {
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        d: "M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+    })
+);
+
+const StarIcon = () => React.createElement('svg',
+    {
+        xmlns: "http://www.w3.org/2000/svg",
+        className: "h-8 w-8 text-amber-500",
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        strokeWidth: 2
+    },
+    React.createElement('path', {
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        d: "M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+    })
+);
+
+const GlobeIcon = () => React.createElement('svg',
+    {
+        xmlns: "http://www.w3.org/2000/svg",
+        className: "h-8 w-8 text-emerald-500",
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        strokeWidth: 2
+    },
+    React.createElement('path', {
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        d: "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2h10a2 2 0 002-2v-1a2 2 0 012-2h1.945M7.707 4.564A9 9 0 1019.436 19.436M12 21a9 9 0 000-18h.008v18h-.008z"
+    })
+);
+
+const BriefcaseIcon = () => React.createElement('svg',
+    {
+        xmlns: "http://www.w3.org/2000/svg",
+        className: "h-8 w-8 text-sky-500",
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        strokeWidth: 2
+    },
+    React.createElement('path', {
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        d: "M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+    })
+);
+
+const IKIGAI_SECTIONS: IkigaiSection[] = [
+    {
+        key: 'passion',
+        title: 'Tu Pasión',
+        description: '¿Qué es lo que más disfrutas en la vida? ¿Qué te hace feliz y te llena de energía?',
+        icon: React.createElement(HeartIcon),
+    },
+    {
+        key: 'vocation',
+        title: 'Tu Vocación',
+        description: '¿En qué eres bueno? Describe tus talentos naturales, habilidades y cualidades innatas.',
+        icon: React.createElement(StarIcon),
+    },
+    {
+        key: 'mission',
+        title: 'Tu Misión',
+        description: '¿Qué necesita el mundo y tu entorno? ¿Cómo podrías contribuir a mejorarlo?',
+        icon: React.createElement(GlobeIcon),
+    },
+    {
+        key: 'profession',
+        title: 'Tu Profesión',
+        description: '¿Por qué habilidades o talentos te podrían pagar? ¿Cómo puedes monetizar lo que disfrutas?',
+        icon: React.createElement(BriefcaseIcon),
+    },
+];
+
+const INSPIRING_QUOTES: string[] = [
+    "El propósito de la vida es una vida con propósito.",
+    "El misterio de la existencia humana no reside solo en mantenerse vivo, sino en encontrar algo por lo que vivir.",
+    "Aquel que tiene un porqué para vivir puede soportar casi cualquier cómo.",
+    "Donde tus talentos y las necesidades del mundo se cruzan, ahí yace tu vocación.",
+    "El autodescubrimiento es el comienzo de toda sabiduría.",
+    "La única manera de hacer un gran trabajo es amar lo que haces."
+];
+
+
+// --- GEMINI SERVICE (from services/geminiService.ts) ---
+
+if (!process.env.API_KEY) {
+    throw new Error("API_KEY environment variable not set");
+}
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+const generateIkigaiSummaryStream = async (data: IkigaiData): Promise<AsyncIterable<GenerateContentResponse>> => {
+    const model = 'gemini-2.5-flash';
+
+    const systemInstruction = `Eres un coach de vida experto en la filosofía Ikigai. Tu propósito es ayudar a los usuarios a encontrar su propósito de vida analizando sus propias reflexiones. Sé empático, inspirador y constructivo. Basa tu análisis únicamente en las respuestas del usuario. Formatea tu respuesta en HTML, usando encabezados (<h3>) para las secciones y párrafos (<p>) para el texto. Utiliza <strong> para resaltar las ideas clave. No uses markdown.`;
+
+    const prompt = `
+        Analiza las siguientes reflexiones de un usuario para ayudarle a descubrir su Ikigai. Sintetiza la información, encuentra patrones y conexiones entre las áreas, y ofrécele una perspectiva clara sobre cuál podría ser su propósito de vida.
+
+        <h3>Mi Pasión (lo que amo):</h3>
+        <p>${data.passion}</p>
+
+        <h3>Mi Vocación (en lo que soy bueno):</h3>
+        <p>${data.vocation}</p>
+
+        <h3>Mi Misión (lo que el mundo necesita):</h3>
+        <p>${data.mission}</p>
+        
+        <h3>Mi Profesión (por lo que me pueden pagar):</h3>
+        <p>${data.profession}</p>
+
+        Basado en esto, genera un resumen de mi posible Ikigai. Comienza con una sección titulada 'Síntesis de tu Ikigai' con un párrafo inspirador. Luego, crea una sección 'Puntos Clave de Conexión' con una lista de viñetas HTML (<ul><li>) que conecten mis pasiones, talentos y oportunidades. Finalmente, concluye con una sección 'Tu Ikigai Potencial' que resuma la idea central en una o dos frases potentes.
+    `;
+
+    try {
+        const response = await ai.models.generateContentStream({
+            model: model,
+            contents: prompt,
+            config: {
+                systemInstruction: systemInstruction,
+                temperature: 0.7,
+                topP: 1,
+                topK: 32,
+            }
+        });
+        return response;
+    } catch (error) {
+        console.error("Error generating content from Gemini:", error);
+        throw new Error("Failed to get summary from AI service.");
+    }
+}
+
+
+// --- INLINED UI COMPONENTS ---
+
+const Spinner: React.FC = () => (
+    <svg
+        className="animate-spin h-12 w-12 text-amber-600"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+    >
+        <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+        ></circle>
+        <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+        ></path>
+    </svg>
+);
+
+const Header: React.FC = () => (
+    <header className="bg-transparent pt-8 pb-4">
+        <div className="container mx-auto px-4 text-center">
+            <h1 className="text-4xl md:text-5xl font-bold text-slate-800">
+                Tu Ikigai
+            </h1>
+            <p className="text-lg text-slate-500 mt-2">
+                Descubre el propósito de tu vida
+            </p>
+        </div>
+    </header>
+);
+
+interface IkigaiCardProps {
+    title: string;
+    description: string;
+    icon: React.ReactNode;
+    value: string;
+    onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+}
+
+const IkigaiCard: React.FC<IkigaiCardProps> = ({ title, description, icon, value, onChange }) => (
+    <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-100 transition-all duration-300 hover:shadow-xl hover:border-amber-200 flex flex-col">
+        <div className="flex items-center mb-4">
+            <div className="mr-4">{icon}</div>
+            <h3 className="text-2xl font-bold text-slate-800">{title}</h3>
+        </div>
+        <p className="text-slate-600 mb-4 flex-grow">{description}</p>
+        <textarea
+            value={value}
+            onChange={onChange}
+            placeholder="Escribe tus reflexiones aquí..."
+            rows={6}
+            className="w-full p-4 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-colors duration-200 resize-none"
+            autoFocus
+        />
+    </div>
+);
+
+const Footer: React.FC = () => (
+    <footer className="bg-transparent mt-12">
+        <div className="container mx-auto px-4 py-6 text-center text-slate-500 text-sm">
+            <p>&copy; {new Date().getFullYear()} Tu Ikigai. Todos los derechos reservados.</p>
+            <p className="mt-2">
+                Tu privacidad es importante. Las reflexiones que escribes se envían a la IA de Google para su análisis y no son almacenadas por esta aplicación.
+            </p>
+        </div>
+    </footer>
+);
+
+
+// --- MAIN APP ---
 
 const App: React.FC = () => {
     const [currentStep, setCurrentStep] = useState(0); // 0: Welcome, 1-4: Questions, 5: Loading/Result
@@ -94,10 +336,9 @@ const App: React.FC = () => {
         setError(null);
 
         try {
-            const stream = generateIkigaiSummaryStream(ikigaiData);
+            const stream = await generateIkigaiSummaryStream(ikigaiData);
             for await (const chunk of stream) {
-                if (!isLoading) setIsLoading(true); // ensure loading stays true during stream
-                setAiSummary(prev => prev + chunk); // Simplified: chunk is now a string
+                setAiSummary(prev => prev + chunk.text);
             }
         } catch (err) {
             console.error(err);
